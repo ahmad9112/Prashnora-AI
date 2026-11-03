@@ -1,3 +1,7 @@
+const dns = require('node:dns');
+
+dns.setServers(['8.8.8.8', '1.1.1.1']);
+
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -35,13 +39,38 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 
+
+function isAdminEmail(email) {
+  const admins = (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean);
+
+  return admins.includes(String(email || '').toLowerCase());
+}
+
 function makeToken(user) {
-  const b64 = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const b64 = value =>
+    Buffer.from(JSON.stringify(value)).toString('base64url');
+
   const header = b64({ alg: 'HS256', typ: 'JWT' });
-  const payload = b64({ sub: String(user._id), name: user.name, email: user.email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 });
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
+
+  const payload = b64({
+    sub: String(user._id),
+    name: user.name,
+    email: user.email,
+    role: isAdminEmail(user.email) ? 'admin' : 'student',
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7
+  });
+
+  const signature = crypto
+    .createHmac('sha256', JWT_SECRET)
+    .update(`${header}.${payload}`)
+    .digest('base64url');
+
   return `${header}.${payload}.${signature}`;
 }
+
 function verifyToken(token) {
   const parts = (token || '').split('.');
   if (parts.length !== 3) throw new Error('Invalid token');
@@ -74,7 +103,13 @@ const checkPassword = (password, stored) => new Promise((resolve, reject) => {
     resolve(expected.length === key.length && crypto.timingSafeEqual(expected, key));
   });
 });
-const safeUser = user => ({ id: String(user._id), name: user.name, email: user.email });
+// const safeUser = user => ({ id: String(user._id), name: user.name, email: user.email });
+const safeUser = user => ({
+  id: String(user._id),
+  name: user.name,
+  email: user.email,
+  role: isAdminEmail(user.email) ? 'admin' : 'student'
+});
 
 app.get('/', (_req, res) => res.json({ success: true, message: 'Prashnora backend is running.' }));
 app.get('/api/health', (_req, res) => res.json({ success: true, database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' }));
